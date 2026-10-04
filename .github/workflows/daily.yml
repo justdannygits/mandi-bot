@@ -1,0 +1,19 @@
+name: Daily Mandi Bhav
+on:
+  schedule:
+    - cron: '30 1 * * *'  # roz subah 7:00 IST
+  workflow_dispatch:
+jobs:
+  send:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install requests
+      - run: python mandi_bot.py
+        env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          DATA_GOV_APIKEY: ${{ secrets.DATA_GOV_APIKEY }}
+          CHANNEL: '@purvanchal_mandi_bhav'
