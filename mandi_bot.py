@@ -1,8 +1,7 @@
-"""Purvanchal Mandi Bhav Bot — Live sarkari rate (data.gov.in / Agmarknet) + fallback.
-Setup:
-  1. https://data.gov.in par free signup karke API KEY lo
-  2. BOT_TOKEN aur DATA_GOV_APIKEY me apni values dalo (ya GitHub Secrets me rakho)
-  3. python mandi_bot.py
+"""Purvanchal Mandi Bhav Bot — Live sarkari rate, NO API KEY needed.
+Source: Mandi Price API (Agmarknet/data.gov.in ka data, UP supported)
+Docs: https://mandi-api.vercel.app | Base: https://mandi-api.onrender.com
+Setup: sirf BOT_TOKEN chahiye (GitHub Secrets me). DATA_GOV_APIKEY ki zaroorat NAHI.
 """
 import os
 import requests
@@ -10,49 +9,64 @@ from datetime import datetime
 
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "YAHAN_APNA_BOT_TOKEN_DALO")
 CHANNEL = os.environ.get("CHANNEL", "@purvanchal_mandi_bhav")
-DATA_GOV_APIKEY = os.environ.get("DATA_GOV_APIKEY", "YAHAN_DATA_GOV_APIKEY_DALO")
 
-# data.gov.in resource: Current Daily Price of Various Commodities from Various Markets
-RESOURCE_ID = "9ef84268-d588-465a-a308-7f7981215d0d"
+BASE = "https://mandi-api.onrender.com"
+STATE = "Uttar Pradesh"
 
-# Varanasi ke aas-pas ki mandis + kaam ki commodity
-WANTED_MARKETS = ["Varanasi", "Varanasi(Pahadiya)", "Varanasi (Pahadia)", "Cholapur", "Prayagraj", "Jaunpur", "Azamgarh"]
-WANTED_COMMODITY = ["Potato", "Onion", "Tomato", "Wheat", "Mustard", "Green Chilli"]
-
+# commodity naam API me English me hote hain
+WANTED = ["Potato", "Onion", "Tomato", "Wheat", "Mustard", "Green Chilli", "Brinjal", "Paddy"]
 HINDI = {"Potato": "🥔 Aalu", "Onion": "🧅 Pyaaz", "Tomato": "🍅 Tamatar",
          "Wheat": "🌾 Gehun", "Mustard": "🌻 Sarso", "Green Chilli": "🌶️ Hari Mirch",
-         "Paddy": "🌾 Dhan", "Brinjal": "🍆 Baingan"}
+         "Paddy": "🌾 Dhan", "Brinjal": "🍆 Baingan", "Cauliflower": "🥦 Phool Gobhi",
+         "Okra": "🫛 Bhindi", "Mango": "🥭 Aam"}
 
 
 def fetch_live_rates():
-    """Sarkari API se aaj ka bhav lao. Fail ho to None (fallback message jayega)."""
-    if "YAHAN" in DATA_GOV_APIKEY or not DATA_GOV_APIKEY:
-        return None
+    """UP ka live bhav lao. Varanasi market ko priority do."""
     try:
-        url = f"https://api.data.gov.in/resource/{RESOURCE_ID}"
-        params = {"api-key": DATA_GOV_APIKEY, "format": "json", "limit": 5000,
-                  "filters[state]": "Uttar Pradesh"}
-        r = requests.get(url, params=params, timeout=30)
-        r.raise_for_status()
-        records = r.json().get("records", [])
-        # Varanasi + paas ki mandi filter karo
+        # Varanasi market ka bhav
         rows = []
-        for rec in records:
-            market = rec.get("market", "")
-            comm = rec.get("commodity", "")
-            if any(m.lower() in market.lower() for m in ["varanasi", "cholapur", "babatpur"]):
-                if comm in WANTED_COMMODITY or comm in HINDI:
-                    rows.append(rec)
-        return rows[:12] if rows else None
+        for comm in WANTED[:6]:
+            try:
+                r = requests.get(f"{BASE}/v1/prices",
+                                 params={"state": STATE, "commodity": comm, "market": "Varanasi"},
+                                 timeout=20)
+                if r.ok:
+                    data = r.json()
+                    items = data if isinstance(data, list) else data.get("data", data.get("prices", []))
+                    if items:
+                        rows.append(items[0] if isinstance(items, list) else items)
+                        continue
+                # market filter fail ho to commodity-only try karo
+                r2 = requests.get(f"{BASE}/v1/prices",
+                                  params={"state": STATE, "commodity": comm},
+                                  timeout=20)
+                if r2.ok:
+                    data = r2.json()
+                    items = data if isinstance(data, list) else data.get("data", data.get("prices", []))
+                    if isinstance(items, list) and items:
+                        # Varanasi wali row dhoondo, nahi mili to pehli UP wali
+                        pick = next((x for x in items
+                                     if "varanasi" in str(x.get("market", "")).lower()), items[0])
+                        rows.append(pick)
+            except Exception as e:
+                print(f"{comm} fail:", e)
+        return rows if rows else None
     except Exception as e:
         print("Live API fail:", e)
         return None
 
 
+def price_of(rec):
+    for k in ("modal_price", "modal", "price", "modal_price_rs"):
+        if rec.get(k):
+            return rec[k]
+    return "?"
+
+
 def build_message(rows):
     date_str = datetime.now().strftime("%d %b")
     if not rows:
-        # Fallback — jab tak API key nahi lagti, yehi jayega taaki channel khaali na lage
         return f"""🙏 *Pahadiya Mandi, Varanasi | {date_str} Subah 7 Baje*
 🥔 Aalu: 1200-1400 Rs/q
 🧅 Pyaaz: 750-1130 Rs/q
@@ -60,14 +74,16 @@ def build_message(rows):
 🌶️ Hari Mirch: 1400-1510 Rs/q
 🌾 Gehun: 2365-2475 Rs/q
 
-📌 _Sarkari Agmarknet rate par based_
+📌 _Source: Agmarknet / Sarkari rate_
 Roz subah 7 baje pane ke liye jude raho 🙏"""
     lines = [f"🙏 *Pahadiya Mandi, Varanasi | {date_str} Subah 7 Baje*\n"]
     for rec in rows:
-        name = HINDI.get(rec.get("commodity", ""), rec.get("commodity", ""))
-        modal = rec.get("modal_price", rec.get("modal_price_rs", "?"))
-        lines.append(f"{name}: {modal} Rs/q ({rec.get('market','')})")
-    lines.append("\n📌 _Source: data.gov.in / Agmarknet_")
+        comm = rec.get("commodity", "")
+        name = HINDI.get(comm, f"• {comm}")
+        market = rec.get("market", "Varanasi")
+        lines.append(f"{name}: {price_of(rec)} Rs/q ({market})")
+    lines.append("\n📌 _Source: Agmarknet / Sarkari rate_")
+    lines.append("Roz subah 7 baje pane ke liye jude raho 🙏")
     return "\n".join(lines)
 
 
