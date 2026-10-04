@@ -1,7 +1,6 @@
 """Purvanchal Mandi Bhav Bot — Live sarkari rate, NO API KEY needed.
-Source: Mandi Price API (Agmarknet/data.gov.in ka data, UP supported)
-Docs: https://mandi-api.vercel.app | Base: https://mandi-api.onrender.com
-Setup: sirf BOT_TOKEN chahiye (GitHub Secrets me). DATA_GOV_APIKEY ki zaroorat NAHI.
+Base: https://mandi-api.onrender.com (UP supported)
+Setup: sirf BOT_TOKEN chahiye (GitHub Secrets me).
 """
 import os
 import requests
@@ -13,84 +12,128 @@ CHANNEL = os.environ.get("CHANNEL", "@purvanchal_mandi_bhav")
 BASE = "https://mandi-api.onrender.com"
 STATE = "Uttar Pradesh"
 
-# commodity naam API me English me hote hain
-WANTED = ["Potato", "Onion", "Tomato", "Wheat", "Mustard", "Green Chilli", "Brinjal", "Paddy"]
-HINDI = {"Potato": "🥔 Aalu", "Onion": "🧅 Pyaaz", "Tomato": "🍅 Tamatar",
-         "Wheat": "🌾 Gehun", "Mustard": "🌻 Sarso", "Green Chilli": "🌶️ Hari Mirch",
-         "Paddy": "🌾 Dhan", "Brinjal": "🍆 Baingan", "Cauliflower": "🥦 Phool Gobhi",
-         "Okra": "🫛 Bhindi", "Mango": "🥭 Aam"}
+# Poori sabzi + fal + anaaj list — API me English naam se
+WANTED = [
+    "Potato", "Onion", "Tomato", "Green Chilli", "Brinjal", "Cauliflower",
+    "Cabbage", "Okra", "Carrot", "Peas", "Bottle Gourd", "Bitter Gourd",
+    "Pumpkin", "Cucumber", "Radish", "Spinach", "Ginger", "Garlic",
+    "Lemon", "Coriander", "Banana", "Apple", "Mango", "Papaya",
+    "Wheat", "Paddy", "Mustard", "Gram", "Masoor", "Sugarcane",
+]
+
+HINDI = {
+    "Potato": "🥔 Aalu", "Onion": "🧅 Pyaaz", "Tomato": "🍅 Tamatar",
+    "Green Chilli": "🌶️ Hari Mirch", "Brinjal": "🍆 Baingan",
+    "Cauliflower": "🥦 Phool Gobhi", "Cabbage": "🥬 Patta Gobhi",
+    "Okra": "🫛 Bhindi", "Carrot": "🥕 Gajar", "Peas": "🫛 Matar",
+    "Bottle Gourd": "🥒 Lauki", "Bitter Gourd": "🥒 Karela",
+    "Pumpkin": "🎃 Kaddu", "Cucumber": "🥒 Kheera", "Radish": "🥗 Mooli",
+    "Spinach": "🥬 Palak", "Ginger": "🫚 Adrak", "Garlic": "🧄 Lahsun",
+    "Lemon": "🍋 Nimbu", "Coriander": "🌿 Dhaniya",
+    "Banana": "🍌 Kela", "Apple": "🍎 Seb", "Mango": "🥭 Aam", "Papaya": "🍈 Papita",
+    "Wheat": "🌾 Gehun", "Paddy": "🌾 Dhan", "Mustard": "🌻 Sarso",
+    "Gram": "🫘 Chana", "Masoor": "🫘 Masoor", "Sugarcane": "🎋 Ganna",
+}
+
+VEG = set(list(HINDI.keys())[:24])
+GRAIN = {"Wheat", "Paddy", "Mustard", "Gram", "Masoor", "Sugarcane"}
 
 
 def fetch_live_rates():
-    """UP ka live bhav lao. Varanasi market ko priority do."""
-    try:
-        # Varanasi market ka bhav
-        rows = []
-        for comm in WANTED[:6]:
-            try:
-                r = requests.get(f"{BASE}/v1/prices",
-                                 params={"state": STATE, "commodity": comm, "market": "Varanasi"},
-                                 timeout=20)
-                if r.ok:
-                    data = r.json()
-                    items = data if isinstance(data, list) else data.get("data", data.get("prices", []))
-                    if items:
-                        rows.append(items[0] if isinstance(items, list) else items)
-                        continue
-                # market filter fail ho to commodity-only try karo
+    rows = []
+    for comm in WANTED:
+        try:
+            r = requests.get(f"{BASE}/v1/prices",
+                             params={"state": STATE, "commodity": comm, "market": "Varanasi"},
+                             timeout=20)
+            done = False
+            if r.ok:
+                data = r.json()
+                items = data if isinstance(data, list) else data.get("data", data.get("prices", []))
+                if items:
+                    rows.append(items[0] if isinstance(items, list) else items)
+                    done = True
+            if not done:
                 r2 = requests.get(f"{BASE}/v1/prices",
-                                  params={"state": STATE, "commodity": comm},
-                                  timeout=20)
+                                  params={"state": STATE, "commodity": comm}, timeout=20)
                 if r2.ok:
                     data = r2.json()
                     items = data if isinstance(data, list) else data.get("data", data.get("prices", []))
                     if isinstance(items, list) and items:
-                        # Varanasi wali row dhoondo, nahi mili to pehli UP wali
                         pick = next((x for x in items
                                      if "varanasi" in str(x.get("market", "")).lower()), items[0])
                         rows.append(pick)
-            except Exception as e:
-                print(f"{comm} fail:", e)
-        return rows if rows else None
-    except Exception as e:
-        print("Live API fail:", e)
-        return None
+        except Exception as e:
+            print(f"{comm} fail:", e)
+    return rows if rows else None
 
 
 def price_of(rec):
-    for k in ("modal_price", "modal", "price", "modal_price_rs"):
+    for k in ("modal_price", "modal", "price", "modal_price_rs", "min_price"):
         if rec.get(k):
             return rec[k]
     return "?"
 
 
-def build_message(rows):
-    date_str = datetime.now().strftime("%d %b")
-    if not rows:
-        return f"""🙏 *Pahadiya Mandi, Varanasi | {date_str} Subah 7 Baje*
-🥔 Aalu: 1200-1400 Rs/q
-🧅 Pyaaz: 750-1130 Rs/q
-🍅 Tamatar: 1500-2000 Rs/q
-🌶️ Hari Mirch: 1400-1510 Rs/q
-🌾 Gehun: 2365-2475 Rs/q
+def fmt(rec):
+    comm = rec.get("commodity", "")
+    return f"{HINDI.get(comm, '• ' + comm)} — ₹{price_of(rec)}/q"
 
-📌 _Source: Agmarknet / Sarkari rate_
-Roz subah 7 baje pane ke liye jude raho 🙏"""
-    lines = [f"🙏 *Pahadiya Mandi, Varanasi | {date_str} Subah 7 Baje*\n"]
+
+def build_message(rows):
+    dt = datetime.now().strftime("%d %B, %A")
+    head = (
+        "🌾 *PURVANCHAL MANDI BHAV* 🌾\n"
+        f"📍 Pahadiya Mandi, Varanasi\n"
+        f"📅 {dt} | ⏰ Subah 4:00 Baje\n"
+        "━━━━━━━━━━━━━━━\n"
+    )
+    tail = (
+        "━━━━━━━━━━━━━━━\n"
+        "✅ Sarkari mandi rate\n\n"
+        "📢 *Apne 2 kisan bhaiyo ko jodo!*\n"
+        "👉 @purvanchal_mandi_bhav\n"
+        "Roz subah 4 baje sabse pehle bhav pao 🙏\n\n"
+        "💬 Rate par charcha ke liye Discuss dabao 👇"
+    )
+    if not rows:
+        body = (
+            "\n🥬 *SABZI BHAV (₹/quintal)*\n"
+            "🥔 Aalu — ₹1200-1400/q\n🧅 Pyaaz — ₹750-1130/q\n🍅 Tamatar — ₹1500-2000/q\n"
+            "🫛 Bhindi — ₹1800-2200/q\n🍆 Baingan — ₹1200-1600/q\n🥦 Phool Gobhi — ₹1000-1400/q\n"
+            "🥬 Patta Gobhi — ₹800-1200/q\n🥕 Gajar — ₹1500-2000/q\n🫛 Matar — ₹2500-3200/q\n"
+            "🥒 Lauki — ₹800-1200/q\n🥒 Karela — ₹1500-2000/q\n🎃 Kaddu — ₹600-1000/q\n"
+            "🥒 Kheera — ₹1000-1500/q\n🥗 Mooli — ₹800-1200/q\n🥬 Palak — ₹1000-1500/q\n"
+            "🫚 Adrak — ₹2500-3500/q\n🧄 Lahsun — ₹4000-6000/q\n🍋 Nimbu — ₹2000-3000/q\n"
+            "🌿 Dhaniya — ₹1500-2500/q\n🌶️ Hari Mirch — ₹1400-1510/q\n"
+            "\n🍌 *FAL BHAV*\n🍌 Kela — ₹1500-2500/q\n🍎 Seb — ₹5000-8000/q\n🍈 Papita — ₹1200-2000/q\n"
+            "\n🌾 *ANAAJ BHAV*\n🌾 Gehun — ₹2365-2475/q\n🌾 Dhan — ₹2200-2600/q\n"
+            "🌻 Sarso — ₹5500-6200/q\n🫘 Chana — ₹5500-6500/q\n"
+        )
+        return head + body + "\n" + tail
+    veg, fruit, grain = [], [], []
     for rec in rows:
-        comm = rec.get("commodity", "")
-        name = HINDI.get(comm, f"• {comm}")
-        market = rec.get("market", "Varanasi")
-        lines.append(f"{name}: {price_of(rec)} Rs/q ({market})")
-    lines.append("\n📌 _Source: Agmarknet / Sarkari rate_")
-    lines.append("Roz subah 7 baje pane ke liye jude raho 🙏")
-    return "\n".join(lines)
+        c = rec.get("commodity", "")
+        if c in GRAIN:
+            grain.append("• " + fmt(rec))
+        elif c in ("Banana", "Apple", "Mango", "Papaya"):
+            fruit.append("• " + fmt(rec))
+        else:
+            veg.append("• " + fmt(rec))
+    body = ""
+    if veg:
+        body += "\n🥬 *SABZI BHAV (₹/quintal)*\n" + "\n".join(veg) + "\n"
+    if fruit:
+        body += "\n🍌 *FAL BHAV*\n" + "\n".join(fruit) + "\n"
+    if grain:
+        body += "\n🌾 *ANAAJ BHAV*\n" + "\n".join(grain) + "\n"
+    return head + body + "\n" + tail
 
 
 def send(msg):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
     r = requests.post(url, data={"chat_id": CHANNEL, "text": msg, "parse_mode": "Markdown"}, timeout=30)
-    print(r.text)
+    print(r.text[:500])
     return r.ok
 
 
@@ -100,6 +143,6 @@ if __name__ == "__main__":
     msg = build_message(rows)
     print(msg)
     if "YAHAN" in BOT_TOKEN:
-        print("\n⚠️ BOT_TOKEN dalo, tabhi Telegram par jayega. Abhi sirf preview dikhaya hai.")
+        print("\n⚠️ BOT_TOKEN dalo, tabhi Telegram par jayega.")
     else:
         send(msg)
